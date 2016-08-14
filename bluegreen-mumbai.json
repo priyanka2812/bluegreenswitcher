@@ -1,0 +1,266 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Blue Green Switcher",
+  "Parameters": {
+    "InstanceType": {
+      "Type": "String",
+      "Default": "t2.micro",
+      "AllowedValues": [
+        "cc2.8xlarge",
+        "c3.8xlarge",
+        "c3.4xlarge",
+        "c3.2xlarge",
+        "c3.xlarge",
+        "c3.large",
+        "c4.8xlarge",
+        "c4.4xlarge",
+        "c4.2xlarge",
+        "c4.xlarge",
+        "c4.large",
+        "r3.8xlarge",
+        "r3.4xlarge",
+        "r3.2xlarge",
+        "r3.xlarge",
+        "r3.large",
+        "i2.8xlarge",
+        "i2.4xlarge",
+        "i2.2xlarge",
+        "i2.xlarge",
+        "cr1.8xlarge",
+        "cg1.4xlarge",
+        "m3.medium",
+        "m3.large",
+        "m3.xlarge",
+        "m3.2xlarge",
+        "hi1.4xlarge",
+        "g2.2xlarge",
+        "t2.micro",
+        "t2.small",
+        "t2.medium",
+        "t2.large",
+        "t2.nano",
+        "d2.8xlarge",
+        "d2.4xlarge",
+        "d2.2xlarge",
+        "d2.xlarge",
+        "m4.large",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge"
+      ],
+      "ConstraintDescription": "must be a valid EC2 instance type."
+    },
+    "Subnets": {
+      "Type": "List<AWS::EC2::Subnet::Id>"
+    },
+    "SecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup::Id"
+    },
+    "KeyName": {
+      "Type": "AWS::EC2::KeyPair::KeyName"
+    },
+    "Vpc": {
+      "Type": "AWS::EC2::VPC::Id"
+    },
+    "IAMInstanceProfileName": {
+      "Type": "String",
+      "Default": "baston"
+    },
+    "UpdateElbArn": {
+      "Type": "String",
+      "Default": " "
+    },
+    "UpdateInstanceCountArn": {
+      "Type": "String"
+    },
+    "AsgAlarmArn":{
+      "Type": "String",
+      "Default":"arn:aws:sns:ap-south-1:227099088681:priyanka-email"
+    },
+    "AmazonLinuxAmi": {
+      "Type": "String",
+      "Default": "ami-ffbdd790"
+    },
+    "ProdElasticLoadBalancerName": {
+      "Type": "String"
+    },
+    "TestElasticLoadBalancerName": {
+      "Type": "String"
+    }
+  },
+  "Conditions": {
+    "UpdateElbArn": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "UpdateElbArn"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "AsgGreen": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "LaunchConfigurationName": {
+          "Ref": "LcGreen"
+        },
+        "LoadBalancerNames": [
+          {
+            "Ref": "TestElasticLoadBalancerName"
+          }
+        ],
+        "MinSize": 1,
+        "DesiredCapacity": 1,
+        "MaxSize": 1,
+        "VPCZoneIdentifier": {
+          "Ref": "Subnets"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "PropagateAtLaunch": true,
+            "Value": "CmolAPI-ASG-01"
+          }
+        ]
+      }
+    },
+    "LcGreen": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "AssociatePublicIpAddress": true,
+        "ImageId": {
+          "Ref": "AmazonLinuxAmi"
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "IamInstanceProfile": {"Ref": "IAMInstanceProfileName"},
+        "InstanceMonitoring": true,
+        "SecurityGroups": [
+          {
+            "Ref": "SecurityGroup"
+          }
+        ],
+        "KeyName": {
+          "Ref": "KeyName"
+        }
+      }
+    },
+    "ScaleUpPolicy": {
+      "Type": "AWS::AutoScaling::ScalingPolicy",
+      "Properties": {
+        "AdjustmentType": "ChangeInCapacity",
+        "AutoScalingGroupName": {
+          "Ref": "AsgGreen"
+        },
+        "ScalingAdjustment": "1"
+      }
+    },
+    "CPUAlarmHigh": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "EvaluationPeriods": "2",
+        "Statistic": "Average",
+        "Threshold": "70",
+        "AlarmDescription": "Alarm if CPU too high or metric disappears indicating instance is down",
+        "Period": "60",
+        "AlarmActions": [
+          {
+            "Ref": "ScaleUpPolicy"
+          }
+        ],
+        "Namespace": "AWS/EC2",
+        "Dimensions": [
+          {
+            "Name": "AutoScalingGroupName",
+            "Value": {
+              "Ref": "AsgGreen"
+            }
+          }
+        ],
+        "ComparisonOperator": "GreaterThanThreshold",
+        "MetricName": "CPUUtilization",
+        "OKActions": [
+           {"Ref": "AsgAlarmArn"}
+        ]
+      }
+    },
+    "ScaleDownPolicy": {
+      "Type": "AWS::AutoScaling::ScalingPolicy",
+      "Properties": {
+        "AdjustmentType": "ChangeInCapacity",
+        "AutoScalingGroupName": {
+          "Ref": "AsgGreen"
+        },
+        "ScalingAdjustment": "-1"
+      }
+    },
+    "CPUAlarmLow": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "EvaluationPeriods": "2",
+        "Statistic": "Average",
+        "Threshold": "20",
+        "AlarmDescription": "Alarm if CPU too Low ",
+        "Period": "300",
+        "AlarmActions": [
+          {
+            "Ref": "ScaleDownPolicy"
+          }
+        ],
+        "Namespace": "AWS/EC2",
+        "Dimensions": [
+          {
+            "Name": "AutoScalingGroupName",
+            "Value": {
+              "Ref": "AsgGreen"
+            }
+          }
+        ],
+        "ComparisonOperator": "LessThanThreshold",
+        "MetricName": "CPUUtilization",
+        "OKActions": [
+          {"Ref": "AsgAlarmArn"}
+        ]
+      }
+    },
+    "UpdateInstanceCount": {
+      "Type": "Custom::UpdateInstanceCount",
+      "Properties": {
+        "ServiceToken": {
+          "Ref": "UpdateInstanceCountArn"
+        },
+        "ProdLoadBalancerName": {
+          "Ref": "ProdElasticLoadBalancerName"
+        },
+        "AutoScalingGroupName": {
+          "Ref": "AsgGreen"
+        }
+      }
+    },
+    "UpdateELB": {
+      "Condition": "UpdateElbArn",
+      "Type": "Custom::SwitchElb",
+      "Properties": {
+        "ServiceToken": {
+          "Ref": "UpdateElbArn"
+        },
+        "ProdLoadBalancerName": {
+          "Ref": "ProdElasticLoadBalancerName"
+        },
+        "TestLoadBalancerName": {
+          "Ref": "TestElasticLoadBalancerName"
+        },
+        "AutoScalingGroupName": {
+          "Ref": "AsgGreen"
+        }
+      }
+    }
+  }
+}
